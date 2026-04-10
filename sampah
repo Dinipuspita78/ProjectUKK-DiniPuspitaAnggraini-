@@ -1,0 +1,439 @@
+pangil bersadarkan session 
+<?php
+// Di checkout.php dan file lain
+require_once 'components/session_init.php';
+require_once 'components/database.php';
+// ... sisa kode
+?>
+
+file baru session 
+<?php
+// components/session_init.php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+?>
+<?php
+// PERBAIKAN: Tambahkan session_start()
+session_start();
+require_once 'components/database.php';
+
+// PERBAIKAN: Ganti fungsi dengan validasi manual
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'user') {
+    header('Location: login.php');
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+
+// Get user info - PERBAIKI NAMA TABEL
+$user_query = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id");
+$user = mysqli_fetch_assoc($user_query);
+
+// PERBAIKI: Nama tabel dan kolom yang benar
+$cart_items = mysqli_query($conn, 
+    "SELECT k.*, p.nama, p.harga, p.gambar, p.stok 
+     FROM keranjang k 
+     JOIN produk p ON k.produk_id = p.id 
+     WHERE k.user_id = $user_id");
+
+// Calculate total
+$total = 0;
+$items = [];
+while ($item = mysqli_fetch_assoc($cart_items)) {
+    $item_total = $item['harga'] * $item['jumlah'];
+    $total += $item_total;
+    $items[] = $item;
+}
+
+// PERBAIKAN: Pindahkan kode ini setelah deklarasi variabel
+// Process checkout
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $shipping_address = mysqli_real_escape_string($conn, $_POST['shipping_address']);
+    $payment_method = mysqli_real_escape_string($conn, $_POST['payment_method']);
+    $notes = mysqli_real_escape_string($conn, $_POST['notes']);
+    
+    // PERBAIKAN: Start transaction
+    mysqli_begin_transaction($conn);
+    
+    try {
+        // PERBAIKAN: Nama tabel dan kolom
+        $order_query = "INSERT INTO orders (user_id, total_amount, shipping_address, payment_method, notes, status) 
+                       VALUES ($user_id, $total, '$shipping_address', '$payment_method', '$notes', 'pending')";
+        
+        if (mysqli_query($conn, $order_query)) {
+            $order_id = mysqli_insert_id($conn);
+            
+            // Add order items
+            foreach ($items as $item) {
+                $product_id = $item['produk_id'];
+                $quantity = $item['jumlah'];
+                $price = $item['harga'];
+                
+                // PERBAIKAN: Nama tabel
+                $order_item_query = "INSERT INTO order_items (order_id, product_id, quantity, price) 
+                                    VALUES ($order_id, $product_id, $quantity, $price)";
+                mysqli_query($conn, $order_item_query);
+                
+                // PERBAIKAN: Nama tabel dan kolom
+                $update_stock_query = "UPDATE produk SET stok = stok - $quantity WHERE id = $product_id";
+                mysqli_query($conn, $update_stock_query);
+            }
+            
+            // PERBAIKAN: Nama tabel
+            $clear_cart_query = "DELETE FROM keranjang WHERE user_id = $user_id";
+            mysqli_query($conn, $clear_cart_query);
+            
+            // Commit transaction
+            mysqli_commit($conn);
+            
+            $_SESSION['order_success'] = true;
+            $_SESSION['order_id'] = $order_id;
+            header('Location: order_confirmation.php?id=' . $order_id);
+            exit();
+        } else {
+            throw new Exception("Gagal membuat pesanan: " . mysqli_error($conn));
+        }
+    } catch (Exception $e) {
+        // Rollback transaction on error
+        mysqli_rollback($conn);
+        $error = "Terjadi kesalahan saat memproses pesanan: " . $e->getMessage();
+    }
+}
+
+$page_title = "Checkout";
+include 'components/header_pengguna.php'; // PERBAIKI NAMA HEADER
+?>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checkout - MinShop</title>
+    <!-- PERBAIKI PATH CSS -->
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* CSS Anda tetap sama */
+        .checkout-container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 2rem;
+        }
+        /* ... sisa CSS tetap sama ... */
+    </style>
+</head>
+<body>
+    <?php include 'components/header_pengguna.php'; ?> <!-- PERBAIKI NAMA HEADER -->
+    
+    <div class="checkout-container">
+        <!-- Left Column: Checkout Form -->
+        <div class="checkout-left">
+            <!-- Step Indicator -->
+            <div class="step-indicator">
+                <div class="step active">
+                    <div class="step-number">1</div>
+                    <span>Alamat Pengiriman</span>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <span>Pembayaran</span>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <span>Konfirmasi</span>
+                </div>
+            </div>
+            
+            <!-- Tampilkan error jika ada -->
+            <?php if (isset($error)): ?>
+            <div class="alert alert-error" style="background: #ffebee; color: #c62828; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #c62828;">
+                <i class="fas fa-exclamation-triangle"></i> <?php echo $error; ?>
+            </div>
+            <?php endif; ?>
+            
+            <form method="POST" action="" id="checkoutForm">
+                <!-- Shipping Address -->
+                <div class="checkout-section">
+                    <h2><i class="fas fa-map-marker-alt"></i> Alamat Pengiriman</h2>
+                    
+                    <div class="address-item selected">
+                        <input type="radio" name="shipping_address" value="<?php echo htmlspecialchars($user['alamat'] ?? $user['address'] ?? ''); ?>" 
+                               checked hidden id="address1">
+                        <label for="address1" style="cursor: pointer; width: 100%;">
+                            <h4 style="margin-bottom: 0.5rem;">Alamat Utama</h4>
+                            <p style="margin-bottom: 0.5rem;"><strong><?php echo $user['nama'] ?? $user['name'] ?? 'User'; ?></strong></p>
+                            <p style="color: #666; margin: 0;"><?php echo $user['alamat'] ?? $user['address'] ?? 'Alamat belum diisi'; ?></p>
+                            <p style="color: #666; margin: 0.5rem 0 0;"><?php echo $user['telepon'] ?? $user['phone'] ?? ''; ?></p>
+                        </label>
+                    </div>
+                    
+                    <!-- Alternative: Add new address -->
+                    <div class="address-item" id="newAddressToggle" style="text-align: center; cursor: pointer;">
+                        <i class="fas fa-plus"></i> Gunakan Alamat Lain
+                    </div>
+                    
+                    <!-- New Address Form (hidden by default) -->
+                    <div id="newAddressForm" style="display: none; margin-top: 1rem;">
+                        <div class="form-group">
+                            <label for="new_name">Nama Penerima</label>
+                            <input type="text" id="new_name" name="new_name" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label for="new_phone">Nomor Telepon</label>
+                            <input type="tel" id="new_phone" name="new_phone" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label for="new_address">Alamat Lengkap</label>
+                            <textarea id="new_address" name="new_address" rows="3" class="form-control"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="new_city">Kota</label>
+                            <input type="text" id="new_city" name="new_city" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label for="new_postal">Kode Pos</label>
+                            <input type="text" id="new_postal" name="new_postal" class="form-control">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Payment Method -->
+                <div class="checkout-section">
+                    <h2><i class="fas fa-credit-card"></i> Metode Pembayaran</h2>
+                    
+                    <div class="payment-methods">
+                        <div class="payment-method selected" data-method="transfer">
+                            <input type="radio" name="payment_method" value="transfer" checked hidden>
+                            <i class="fas fa-university"></i>
+                            <h4>Transfer Bank</h4>
+                            <p>BCA, Mandiri, BNI</p>
+                        </div>
+                        
+                        <div class="payment-method" data-method="cod">
+                            <input type="radio" name="payment_method" value="cod" hidden>
+                            <i class="fas fa-money-bill-wave"></i>
+                            <h4>COD</h4>
+                            <p>Bayar di Tempat</p>
+                        </div>
+                        
+                        <div class="payment-method" data-method="ewallet">
+                            <input type="radio" name="payment_method" value="ewallet" hidden>
+                            <i class="fas fa-mobile-alt"></i>
+                            <h4>E-Wallet</h4>
+                            <p>OVO, Dana, GoPay</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Payment Instructions -->
+                    <div id="paymentInstructions" style="margin-top: 1rem; padding: 1rem; background-color: #f0f7ff; border-radius: 8px;">
+                        <h4>Instruksi Transfer Bank:</h4>
+                        <p>1. Transfer ke rekening BCA: 1234567890 (MinShop)</p>
+                        <p>2. Jumlah transfer: <strong>Rp <?php echo number_format($total + 17000, 0, ',', '.'); ?></strong></p>
+                        <p>3. Tambahkan kode unik: <strong><?php echo rand(1, 99); ?></strong></p>
+                        <p>4. Upload bukti transfer setelah checkout</p>
+                    </div>
+                </div>
+                
+                <!-- Order Notes -->
+                <div class="checkout-section">
+                    <h2><i class="fas fa-sticky-note"></i> Catatan Pesanan (Opsional)</h2>
+                    <div class="form-group">
+                        <textarea name="notes" rows="3" placeholder="Contoh: Tolong datang siang hari, atau catatan khusus lainnya..." class="form-control"></textarea>
+                    </div>
+                </div>
+            </form>
+        </div>
+        
+        <!-- Right Column: Order Summary -->
+        <div class="checkout-right">
+            <div class="checkout-section" style="position: sticky; top: 20px;">
+                <h2><i class="fas fa-receipt"></i> Ringkasan Pesanan</h2>
+                
+                <!-- Products List -->
+                <div style="max-height: 300px; overflow-y: auto; margin-bottom: 1rem;">
+                    <?php if (empty($items)): ?>
+                        <p style="text-align: center; color: #666; padding: 20px;">Keranjang kosong</p>
+                    <?php else: ?>
+                        <?php foreach ($items as $item): ?>
+                        <div class="product-checkout">
+                            <!-- PERBAIKI PATH GAMBAR -->
+                            <img src="project assets/produk/<?php echo $item['gambar'] ?? 'default.jpg'; ?>" 
+                                 alt="<?php echo $item['nama']; ?>" 
+                                 class="product-checkout-image"
+                                 onerror="this.src='project assets/produk/default.jpg'">
+                            <div class="product-checkout-info">
+                                <h4 style="margin-bottom: 0.5rem; font-size: 14px;"><?php echo $item['nama']; ?></h4>
+                                <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                                    <span>Rp <?php echo number_format($item['harga'], 0, ',', '.'); ?> × <?php echo $item['jumlah']; ?></span>
+                                    <span class="product-checkout-price">
+                                        Rp <?php echo number_format($item['harga'] * $item['jumlah'], 0, ',', '.'); ?>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
+                
+                <!-- Order Summary -->
+                <div class="order-summary">
+                    <div class="order-summary-item">
+                        <span>Subtotal</span>
+                        <span>Rp <?php echo number_format($total, 0, ',', '.'); ?></span>
+                    </div>
+                    <div class="order-summary-item">
+                        <span>Biaya Pengiriman</span>
+                        <span>Rp 15.000</span>
+                    </div>
+                    <div class="order-summary-item">
+                        <span>Biaya Layanan</span>
+                        <span>Rp 2.000</span>
+                    </div>
+                    <div class="order-summary-total">
+                        <span>Total Pembayaran</span>
+                        <span style="color: #4a6cf7;">
+                            Rp <?php echo number_format($total + 17000, 0, ',', '.'); ?>
+                        </span>
+                    </div>
+                </div>
+                
+                <!-- Terms and Conditions -->
+                <div style="margin: 1.5rem 0; padding: 1rem; background-color: #f8f9fa; border-radius: 8px;">
+                    <div class="form-group" style="display: flex; align-items: flex-start; gap: 0.5rem;">
+                        <input type="checkbox" id="terms" required style="margin-top: 0.3rem;">
+                        <label for="terms" style="font-size: 0.9rem;">
+                            Saya menyetujui <a href="#" style="color: #4a6cf7;">Syarat dan Ketentuan</a> 
+                            serta <a href="#" style="color: #4a6cf7;">Kebijakan Privasi</a> MinShop
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Checkout Button -->
+                <button type="submit" form="checkoutForm" class="btn" style="width: 100%; padding: 1rem; font-size: 1.1rem; background: #4a6cf7; color: white; border: none; border-radius: 8px; cursor: pointer;">
+                    <i class="fas fa-lock"></i> Bayar Sekarang
+                </button>
+                
+                <!-- Continue Shopping -->
+                <a href="produk.php" style="display: block; text-align: center; margin-top: 1rem; color: #4a6cf7; text-decoration: none;">
+                    <i class="fas fa-arrow-left"></i> Lanjutkan Belanja
+                </a>
+            </div>
+            
+            <!-- Security Info -->
+            <div style="text-align: center; margin-top: 1rem; font-size: 0.9rem; color: #666;">
+                <p><i class="fas fa-shield-alt" style="color: #28a745;"></i> Transaksi Anda aman dan terenkripsi</p>
+            </div>
+        </div>
+    </div>
+    
+    <?php include 'components/footer.php'; ?>
+    
+    <script>
+    // Toggle new address form
+    document.getElementById('newAddressToggle')?.addEventListener('click', function() {
+        const form = document.getElementById('newAddressForm');
+        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+        
+        if (form.style.display === 'block') {
+            const newAddressRadio = document.createElement('input');
+            newAddressRadio.type = 'radio';
+            newAddressRadio.name = 'shipping_address';
+            newAddressRadio.value = 'new';
+            newAddressRadio.id = 'newAddress';
+            newAddressRadio.checked = true;
+            newAddressRadio.hidden = true;
+            form.prepend(newAddressRadio);
+            
+            this.style.display = 'none';
+        }
+    });
+    
+    // Payment method selection
+    document.querySelectorAll('.payment-method').forEach(method => {
+        method.addEventListener('click', function() {
+            // Remove selected class from all
+            document.querySelectorAll('.payment-method').forEach(m => {
+                m.classList.remove('selected');
+                m.querySelector('input[type="radio"]').checked = false;
+            });
+            
+            // Add selected class to clicked
+            this.classList.add('selected');
+            this.querySelector('input[type="radio"]').checked = true;
+            
+            // Update payment instructions
+            updatePaymentInstructions(this.dataset.method);
+        });
+    });
+    
+    function updatePaymentInstructions(method) {
+        const instructions = document.getElementById('paymentInstructions');
+        const total = <?php echo $total + 17000; ?>;
+        
+        switch(method) {
+            case 'transfer':
+                instructions.innerHTML = `
+                    <h4>Instruksi Transfer Bank:</h4>
+                    <p>1. Transfer ke rekening BCA: 1234567890 (MinShop)</p>
+                    <p>2. Jumlah transfer: <strong>Rp ${formatCurrency(total)}</strong></p>
+                    <p>3. Tambahkan kode unik: <strong>${Math.floor(Math.random() * 99) + 1}</strong></p>
+                    <p>4. Upload bukti transfer setelah checkout</p>
+                `;
+                break;
+            case 'cod':
+                instructions.innerHTML = `
+                    <h4>Instruksi COD:</h4>
+                    <p>1. Pesanan akan diproses setelah konfirmasi</p>
+                    <p>2. Bayar saat produk diterima</p>
+                    <p>3. Siapkan uang tunai: <strong>Rp ${formatCurrency(total + 5000)}</strong></p>
+                    <p>4. Biaya tambahan COD: Rp 5.000</p>
+                `;
+                break;
+            case 'ewallet':
+                instructions.innerHTML = `
+                    <h4>Instruksi E-Wallet:</h4>
+                    <p>1. Scan QR code atau gunakan nomor telepon</p>
+                    <p>2. Jumlah transfer: <strong>Rp ${formatCurrency(total)}</strong></p>
+                    <p>3. Kode OVO/GoPay: <strong>0812-3456-7890</strong></p>
+                    <p>4. Dana: <strong>0812-3456-7890</strong></p>
+                `;
+                break;
+        }
+    }
+    
+    function formatCurrency(amount) {
+        return amount.toLocaleString('id-ID');
+    }
+    
+    // Form validation
+    document.getElementById('checkoutForm')?.addEventListener('submit', function(e) {
+        const terms = document.getElementById('terms');
+        
+        if (!terms.checked) {
+            e.preventDefault();
+            alert('Harap setujui Syarat dan Ketentuan terlebih dahulu');
+            terms.focus();
+            return false;
+        }
+        
+        // Validate shipping address
+        const shippingAddress = document.querySelector('input[name="shipping_address"]:checked');
+        if (shippingAddress && shippingAddress.value === 'new') {
+            const newAddress = document.getElementById('new_address')?.value;
+            const newCity = document.getElementById('new_city')?.value;
+            
+            if (!newAddress?.trim() || !newCity?.trim()) {
+                e.preventDefault();
+                alert('Harap lengkapi alamat baru');
+                return false;
+            }
+        }
+        
+        // Show loading
+        const submitBtn = document.querySelector('button[type="submit"]');
+        if (submitBtn) {
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i
