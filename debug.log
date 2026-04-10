@@ -1,0 +1,41 @@
+Array
+(
+    [product_id] => 1
+    [quantity] => 1
+    [action] => add_with_qty
+)
+Array
+(
+    [user_id] => 1
+    [nama] => Chelyn
+    [email] => admin@petshop.com
+    [role] => admin
+)
+Array
+(
+    [product_id] => 1
+    [quantity] => 1
+    [action] => add_with_qty
+)
+Array
+(
+    [user_id] => 1
+    [nama] => Chelyn
+    [email] => admin@petshop.com
+    [role] => admin
+    [cart] => Array
+        (
+            [0] => Array
+                (
+                    [user_id] => 1
+                    [product_id] => 1
+                    [quantity] => 1
+                    [product_name] => bolt ikan adult
+                    [product_price] => 18000.00
+                    [product_image] => default.jpg
+                    [added_at] => 2026-02-08 03:11:46
+                )
+
+        )
+
+)
