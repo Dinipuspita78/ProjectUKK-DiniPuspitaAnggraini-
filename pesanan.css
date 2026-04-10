@@ -1,0 +1,359 @@
+/* ===== VARIABLES & RESET ===== */
+:root {
+    --primary-color: #2c3e50;
+    --secondary-color: #34495e;
+    --accent-color: #3498db;
+    --success-color: #2ecc71;
+    --warning-color: #f39c12;
+    --danger-color: #e74c3c;
+    --dark-color: #2c3e50;
+    --light-color: #ecf0f1;
+    --white: #ffffff;
+    --gray-100: #f8f9fa;
+    --gray-200: #e9ecef;
+    --gray-300: #dee2e6;
+    --gray-400: #ced4da;
+    --gray-500: #adb5bd;
+    --gray-600: #6c757d;
+    --shadow-sm: 0 2px 4px rgba(0,0,0,0.05);
+    --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+    --shadow-lg: 0 10px 15px rgba(0,0,0,0.1);
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 15px;
+}
+
+/* ===== MAIN CONTENT STYLES ===== */
+.kurir-content {
+    background: linear-gradient(135deg, #f5f7fa 0%, #e9ecef 100%);
+    min-height: 100vh;
+    padding: 2rem;
+}
+
+.kurir-content > div {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* ===== HEADER SECTION ===== */
+.kurir-content h1 {
+    font-size: 2rem;
+    color: var(--dark-color);
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.kurir-content h1 i {
+    color: var(--accent-color);
+    background: var(--white);
+    padding: 12px;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+}
+
+/* ===== FILTER TABS ===== */
+.filter-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+    background: var(--white);
+    padding: 15px;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+}
+
+.filter-tabs a {
+    padding: 10px 20px;
+    border-radius: 25px;
+    text-decoration: none;
+    color: var(--gray-600);
+    font-weight: 500;
+    transition: all 0.3s ease;
+    background: var(--gray-100);
+    border: 1px solid var(--gray-200);
+}
+
+.filter-tabs a:hover {
+    background: var(--accent-color);
+    color: var(--white);
+    border-color: var(--accent-color);
+    transform: translateY(-2px);
+}
+
+.filter-tabs a.active {
+    background: var(--accent-color);
+    color: var(--white);
+    border-color: var(--accent-color);
+    box-shadow: 0 4px 10px rgba(52, 152, 219, 0.3);
+}
+
+/* ===== TABLE CONTAINER ===== */
+.orders-table {
+    background: var(--white);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+    border: 1px solid var(--gray-200);
+}
+
+/* ===== TABLE STYLES ===== */
+.orders-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+}
+
+.orders-table thead tr {
+    background: linear-gradient(135deg, var(--dark-color) 0%, var(--secondary-color) 100%);
+    color: var(--white);
+}
+
+.orders-table th {
+    padding: 16px 20px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.95rem;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    border-bottom: 2px solid rgba(255,255,255,0.1);
+}
+
+.orders-table td {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--gray-200);
+    color: var(--gray-600);
+    vertical-align: middle;
+}
+
+.orders-table tbody tr {
+    transition: all 0.3s ease;
+}
+
+.orders-table tbody tr:hover {
+    background: var(--gray-100);
+    transform: scale(1.01);
+    box-shadow: var(--shadow-sm);
+}
+
+.orders-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* ===== ORDER ID STYLES ===== */
+.orders-table td:first-child {
+    font-weight: 600;
+    color: var(--dark-color);
+    font-family: 'Courier New', monospace;
+}
+
+/* ===== STATUS BADGE ===== */
+.status-badge {
+    display: inline-block;
+    padding: 8px 16px;
+    border-radius: 30px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: capitalize;
+    letter-spacing: 0.5px;
+    box-shadow: var(--shadow-sm);
+}
+
+.status-menunggu, 
+.status-pending {
+    background: #fff3cd;
+    color: #856404;
+    border-left: 4px solid #ffc107;
+}
+
+.status-dikirim,
+.status-sedang_dikirim {
+    background: #cce5ff;
+    color: #004085;
+    border-left: 4px solid #007bff;
+}
+
+.status-diterima,
+.status-selesai {
+    background: #d4edda;
+    color: #155724;
+    border-left: 4px solid #28a745;
+}
+
+.status-dibatalkan,
+.status-batal {
+    background: #f8d7da;
+    color: #721c24;
+    border-left: 4px solid #dc3545;
+}
+
+.status-diproses {
+    background: #fff3cd;
+    color: #856404;
+    border-left: 4px solid #ffc107;
+}
+
+/* ===== BUTTON STYLES ===== */
+.btn-small {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    background: var(--gray-100);
+    color: var(--gray-600);
+    text-decoration: none;
+    transition: all 0.3s ease;
+    border: 1px solid var(--gray-300);
+    margin: 0 4px;
+}
+
+.btn-small:hover {
+    background: var(--accent-color);
+    color: var(--white);
+    border-color: var(--accent-color);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(52, 152, 219, 0.3);
+}
+
+.btn-success {
+    background: var(--success-color);
+    color: var(--white);
+    border-color: var(--success-color);
+}
+
+.btn-success:hover {
+    background: #27ae60;
+    border-color: #27ae60;
+    box-shadow: 0 4px 8px rgba(46, 204, 113, 0.3);
+}
+
+.btn-warning {
+    background: var(--warning-color);
+    color: var(--white);
+    border-color: var(--warning-color);
+}
+
+.btn-danger {
+    background: var(--danger-color);
+    color: var(--white);
+    border-color: var(--danger-color);
+}
+
+/* ===== ACTION BUTTONS CONTAINER ===== */
+.orders-table td:last-child {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* ===== EMPTY STATE ===== */
+.orders-table tbody tr td[colspan] {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--gray-500);
+}
+
+.empty-state {
+    text-align: center;
+    padding: 40px 20px;
+}
+
+.empty-state i {
+    font-size: 4rem;
+    color: var(--gray-400);
+    margin-bottom: 20px;
+}
+
+.empty-state p {
+    font-size: 1.2rem;
+    color: var(--gray-600);
+    margin-bottom: 10px;
+}
+
+.empty-state small {
+    color: var(--gray-500);
+}
+
+/* ===== RESPONSIVE DESIGN ===== */
+@media (max-width: 1200px) {
+    .orders-table {
+        overflow-x: auto;
+    }
+    
+    .orders-table table {
+        min-width: 1000px;
+    }
+}
+
+@media (max-width: 768px) {
+    .kurir-content {
+        padding: 1rem;
+    }
+    
+    .filter-tabs {
+        padding: 10px;
+    }
+    
+    .filter-tabs a {
+        padding: 8px 16px;
+        font-size: 0.9rem;
+    }
+    
+    .kurir-content h1 {
+        font-size: 1.5rem;
+    }
+}
+
+@media (max-width: 576px) {
+    .filter-tabs {
+        flex-direction: column;
+    }
+    
+    .filter-tabs a {
+        text-align: center;
+    }
+    
+    .orders-table td:last-child {
+        flex-wrap: wrap;
+    }
+}
+
+/* ===== ANIMATIONS ===== */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.kurir-content > div {
+    animation: fadeIn 0.5s ease;
+}
+
+/* ===== CUSTOM SCROLLBAR ===== */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--gray-100);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--gray-500);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--gray-600);
+}
