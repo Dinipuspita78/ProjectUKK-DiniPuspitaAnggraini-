@@ -1,160 +1,46 @@
 <?php
+// kurir/detail_pesanan.php
 session_start();
-require_once 'components/database.php';
+require_once '../components/database.php';
 
-if (!isset($_SESSION['user_id'])) {
-    header('Location: login.php');
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'kurir') {
+    header('Location: login_kurir.php');
     exit();
 }
 
-$user_id = $_SESSION['user_id'];
-$order_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+$kurir_id = $_SESSION['kurir_id'];
+$order_id = $_GET['id'] ?? 0;
 
-// ===== QUERY YANG DIPERBAIKI =====
-$query = "
-    SELECT 
-        o.*,
-        -- Data shipping langsung dari orders (ini yang digunakan di checkout)
-        o.shipping_address,
-        o.shipping_city,
-        o.shipping_province,
-        o.shipping_postal_code,
-        o.shipping_name,
-        o.shipping_phone,
-        -- Data dari user_addresses (jika ada alamat_id)
-        ua.nama_penerima as ua_nama_penerima,
-        ua.telepon as ua_telepon,
-        ua.alamat as ua_alamat,
-        ua.kota as ua_kota,
-        ua.provinsi as ua_provinsi,
-        ua.kode_pos as ua_kode_pos
-    FROM orders o
-    LEFT JOIN user_addresses ua ON o.alamat_id = ua.id
-    WHERE o.id = ? AND o.user_id = ?
-";
-
+// Ambil detail pesanan
+$query = "SELECT o.*, u.nama as nama_pelanggan, u.email, u.telepon, 
+                 k.nama as nama_kurir, k.telepon as hp_kurir,
+                 (SELECT SUM(oi.price * oi.quantity) 
+                  FROM order_items oi
+                  WHERE oi.order_id = o.id) as total_harga
+          FROM orders o 
+          JOIN users u ON o.user_id = u.id 
+          LEFT JOIN kurir k ON o.kurir_id = k.id 
+          WHERE o.id = ? AND o.kurir_id = ?";
+          
 $stmt = mysqli_prepare($conn, $query);
-mysqli_stmt_bind_param($stmt, "ii", $order_id, $user_id);
+mysqli_stmt_bind_param($stmt, "ii", $order_id, $kurir_id);
 mysqli_stmt_execute($stmt);
-$order_result = mysqli_stmt_get_result($stmt);
+$order = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
 
-if (mysqli_num_rows($order_result) == 0) {
+if (!$order) {
     header('Location: pesanan.php');
     exit();
 }
 
-$order = mysqli_fetch_assoc($order_result);
-
-// ===== FUNGSI UNTUK MENDAPATKAN ALAMAT =====
-function getShippingAddress($order) {
-    $address = [];
-    
-    // DEBUG: Untuk melihat data yang ada (uncomment jika perlu debug)
-    /*
-    echo "<div style='background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; border: 1px solid #dee2e6;'>";
-    echo "<h4 style='color: #dc3545;'>DEBUG DATA ORDER:</h4>";
-    echo "<p><strong>Order ID:</strong> " . ($order['id'] ?? 'N/A') . "</p>";
-    echo "<p><strong>Alamat ID:</strong> " . ($order['alamat_id'] ?? 'NULL') . "</p>";
-    echo "<p><strong>Shipping Address:</strong> " . ($order['shipping_address'] ?? 'NULL') . "</p>";
-    echo "<p><strong>Shipping Name:</strong> " . ($order['shipping_name'] ?? 'NULL') . "</p>";
-    echo "<p><strong>UA Alamat:</strong> " . ($order['ua_alamat'] ?? 'NULL') . "</p>";
-    echo "</div>";
-    */
-    
-    // PRIORITAS 1: Data shipping dari orders (seperti disimpan di checkout)
-    if (!empty($order['shipping_address'])) {
-        $address = [
-            'nama' => !empty($order['shipping_name']) ? $order['shipping_name'] : 'Pelanggan',
-            'telepon' => $order['shipping_phone'] ?? '',
-            'alamat' => $order['shipping_address'],
-            'kota' => $order['shipping_city'] ?? '',
-            'provinsi' => $order['shipping_province'] ?? '',
-            'kode_pos' => $order['shipping_postal_code'] ?? '',
-            'sumber' => 'orders'
-        ];
-    }
-    // PRIORITAS 2: Data dari user_addresses
-    elseif (!empty($order['ua_alamat'])) {
-        $address = [
-            'nama' => $order['ua_nama_penerima'] ?? 'Pelanggan',
-            'telepon' => $order['ua_telepon'] ?? '',
-            'alamat' => $order['ua_alamat'],
-            'kota' => $order['ua_kota'] ?? '',
-            'provinsi' => $order['ua_provinsi'] ?? '',
-            'kode_pos' => $order['ua_kode_pos'] ?? '',
-            'sumber' => 'user_addresses'
-        ];
-    }
-    // PRIORITAS 3: Coba field umum lainnya
-    elseif (!empty($order['alamat_pengiriman'])) {
-        $address = [
-            'nama' => $order['nama_penerima'] ?? 'Pelanggan',
-            'telepon' => $order['telepon_penerima'] ?? '',
-            'alamat' => $order['alamat_pengiriman'],
-            'kota' => $order['kota_pengiriman'] ?? '',
-            'provinsi' => $order['provinsi_pengiriman'] ?? '',
-            'kode_pos' => $order['kode_pos_pengiriman'] ?? '',
-            'sumber' => 'old_format'
-        ];
-    }
-    
-    return $address;
-}
-
-// Dapatkan data alamat
-$shipping_address = getShippingAddress($order);
-
-// Get order items
-$items_query = "
-    SELECT 
-        oi.*,
-        p.nama as produk_nama,
-        p.gambar,
-        p.kategori
-    FROM order_items oi
-    JOIN produk p ON oi.product_id = p.id
-    WHERE oi.order_id = ?
-    ORDER BY oi.id
-";
-
-$stmt = mysqli_prepare($conn, $items_query);
-mysqli_stmt_bind_param($stmt, "i", $order_id);
-mysqli_stmt_execute($stmt);
-$items_result = mysqli_stmt_get_result($stmt);
-$items = mysqli_fetch_all($items_result, MYSQLI_ASSOC);
-
-// Calculate subtotal
-$subtotal = 0;
-foreach ($items as $item) {
-    $subtotal += ($item['price'] * $item['quantity']);
-}
-
-// Biaya dari database atau default
-$shipping_cost = isset($order['shipping_cost']) && $order['shipping_cost'] > 0 ? $order['shipping_cost'] : 5000;
-$service_fee = isset($order['service_fee']) && $order['service_fee'] > 0 ? $order['service_fee'] : 1000;
-
-// Hitung total
-$total = $subtotal + $shipping_cost + $service_fee;
-if (isset($order['discount']) && $order['discount'] > 0) {
-    $total -= $order['discount'];
-}
-
-// Status translations
-$status_labels = [
-    'pending' => 'Menunggu Pembayaran',
-    'processing' => 'Diproses',
-    'shipped' => 'Dikirim',
-    'delivered' => 'Sampai',
-    'cancelled' => 'Dibatalkan'
-];
-
-$status_classes = [
-    'pending' => 'status-pending',
-    'processing' => 'status-processing',
-    'shipped' => 'status-shipped',
-    'delivered' => 'status-delivered',
-    'cancelled' => 'status-cancelled'
-];
+// Ambil items pesanan
+$query_items = "SELECT od.*, p.nama, p.gambar, p.deskripsi 
+                FROM order_details od 
+                JOIN produk p ON od.product_id = p.id 
+                WHERE od.order_id = ?";
+$stmt_items = mysqli_prepare($conn, $query_items);
+mysqli_stmt_bind_param($stmt_items, "i", $order_id);
+mysqli_stmt_execute($stmt_items);
+$items = mysqli_stmt_get_result($stmt_items);
 ?>
 
 <!DOCTYPE html>
@@ -162,372 +48,212 @@ $status_classes = [
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Detail Pesanan #<?php echo str_pad($order['id'], 6, '0', STR_PAD_LEFT); ?> - MinShop</title>
-    <link rel="stylesheet" href="css/style.css">
+    <title>Detail Pesanan #<?php echo $order_id; ?> - Kurir MinShop</title>
+    <link rel="stylesheet" href="../css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* ===== DETAIL ORDER PAGE ===== */
-        .order-detail-container {
+        .detail-container {
+            padding: 2rem;
             max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
         }
         
-        .back-link {
+        .back-button {
+            margin-bottom: 1rem;
+        }
+        
+        .btn-back {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            color: #4361ee;
+            gap: 0.5rem;
+            padding: 0.6rem 1rem;
+            background: #6c757d;
+            color: white;
             text-decoration: none;
-            margin-bottom: 20px;
+            border-radius: 5px;
             font-weight: 500;
-        }
-        
-        .back-link:hover {
-            text-decoration: underline;
         }
         
         .order-header {
             background: white;
-            border-radius: 12px;
-            padding: 25px;
-            margin-bottom: 30px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            flex-wrap: wrap;
-            gap: 20px;
         }
         
-        .order-info h1 {
-            color: #212529;
-            margin-bottom: 10px;
-            font-size: 1.8rem;
+        .order-title h1 {
+            margin: 0 0 0.5rem 0;
         }
         
-        .order-date {
-            color: #6c757d;
-            font-size: 0.95rem;
+        .order-meta {
+            display: flex;
+            gap: 2rem;
+            color: #666;
         }
         
         .order-status {
             display: inline-block;
-            padding: 8px 20px;
+            padding: 0.5rem 1rem;
             border-radius: 20px;
-            font-weight: 600;
+            font-weight: 500;
             font-size: 0.9rem;
         }
         
-        .status-pending { background: #fff3cd; color: #856404; }
-        .status-processing { background: #cce5ff; color: #004085; }
-        .status-shipped { background: #d4edda; color: #155724; }
-        .status-delivered { background: #d1ecf1; color: #0c5460; }
-        .status-cancelled { background: #f8d7da; color: #721c24; }
+        .status-pending { background: #ffeaa7; color: #d35400; }
+        .status-dikirim { background: #74b9ff; color: #0984e3; }
+        .status-diterima { background: #55efc4; color: #00b894; }
+        .status-dibatalkan { background: #fab1a0; color: #d63031; }
         
-        .order-grid {
+        .order-content {
             display: grid;
             grid-template-columns: 2fr 1fr;
-            gap: 30px;
+            gap: 2rem;
         }
         
-        @media (max-width: 992px) {
-            .order-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-        
-        /* Order Items */
-        .order-items-section {
+        .order-section {
             background: white;
-            border-radius: 12px;
-            padding: 25px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 1.5rem;
         }
         
         .section-title {
-            font-size: 1.3rem;
-            color: #212529;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #f8f9fa;
+            margin: 0 0 1.5rem 0;
+            padding-bottom: 0.8rem;
+            border-bottom: 2px solid #f1f1f1;
+            color: #333;
         }
         
-        .order-items-list {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
+        .section-title i {
+            margin-right: 0.5rem;
+            color: #2196F3;
         }
         
-        .order-item {
-            display: flex;
-            gap: 15px;
-            padding: 15px;
-            border: 1px solid #e9ecef;
-            border-radius: 8px;
-            transition: all 0.3s ease;
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
         }
         
-        .order-item:hover {
-            border-color: #4361ee;
-            box-shadow: 0 5px 15px rgba(67, 97, 238, 0.1);
+        .items-table th {
+            text-align: left;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-bottom: 2px solid #eee;
+            color: #555;
+        }
+        
+        .items-table td {
+            padding: 1rem;
+            border-bottom: 1px solid #eee;
         }
         
         .item-image {
-            width: 100px;
-            height: 100px;
+            width: 60px;
+            height: 60px;
             object-fit: cover;
-            border-radius: 8px;
-            flex-shrink: 0;
-        }
-        
-        .item-placeholder {
-            width: 100px;
-            height: 100px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            color: #6c757d;
-        }
-        
-        .item-details {
-            flex: 1;
+            border-radius: 5px;
         }
         
         .item-name {
-            font-weight: 600;
-            color: #212529;
-            margin-bottom: 5px;
+            font-weight: 500;
+            margin-bottom: 0.3rem;
         }
         
-        .item-category {
-            display: inline-block;
-            background: #e9ecef;
-            color: #6c757d;
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            margin-bottom: 10px;
-        }
-        
-        .item-quantity {
-            color: #6c757d;
+        .item-meta {
+            color: #666;
             font-size: 0.9rem;
-            margin-bottom: 5px;
         }
         
-        .item-price {
-            font-weight: 600;
-            color: #4361ee;
+        .summary-grid {
+            display: grid;
+            gap: 1rem;
         }
         
-        /* Order Summary */
-        .order-summary-section {
-            background: white;
-            border-radius: 12px;
-            padding: 25px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-            align-self: flex-start;
-            position: sticky;
-            top: 20px;
-        }
-        
-        .summary-row {
+        .summary-item {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 15px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid #f8f9fa;
+            padding: 0.8rem 0;
+            border-bottom: 1px solid #eee;
         }
         
-        .summary-row:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-            padding-bottom: 0;
+        .summary-item.total {
+            border-top: 2px solid #eee;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            font-weight: bold;
+            font-size: 1.1rem;
         }
         
-        .summary-label {
-            color: #6c757d;
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
         }
         
-        .summary-value {
+        .info-item {
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+        
+        .info-item label {
+            display: block;
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 0.3rem;
+        }
+        
+        .info-item span {
             font-weight: 500;
-            color: #212529;
+            color: #333;
         }
         
-        .summary-total {
-            font-size: 1.3rem;
-            font-weight: 700;
-            color: #4361ee;
-        }
-        
-        /* Shipping Address */
-        .shipping-section {
-            background: white;
-            border-radius: 12px;
-            padding: 25px;
-            margin-top: 30px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-        }
-        
-        .address-card {
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 20px;
-            margin-top: 15px;
-            position: relative;
-            border: 1px solid #e9ecef;
-        }
-        
-        .address-source-badge {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: #4361ee;
-            color: white;
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-        
-        .address-card h4 {
-            margin-bottom: 15px;
-            color: #212529;
-            padding-right: 80px;
-        }
-        
-        .address-detail {
+        .action-buttons {
             display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            margin-bottom: 10px;
+            gap: 1rem;
+            margin-top: 2rem;
         }
         
-        .address-detail i {
-            color: #4361ee;
-            margin-top: 2px;
-        }
-        
-        .address-detail p {
-            margin: 0;
-            color: #495057;
-            line-height: 1.5;
-        }
-        
-        .no-address {
-            text-align: center;
-            padding: 40px 30px;
-            color: #6c757d;
-            background: #f8f9fa;
-            border-radius: 8px;
-            border: 2px dashed #dee2e6;
-        }
-        
-        .no-address i {
-            font-size: 48px;
-            margin-bottom: 15px;
-            opacity: 0.5;
-        }
-        
-        /* Debug Info */
-        .debug-info {
-            background: #fff3cd;
-            border: 1px solid #ffecb5;
-            border-radius: 8px;
-            padding: 15px;
-            margin-top: 20px;
-            font-size: 0.85rem;
-            display: none;
-        }
-        
-        .debug-toggle {
-            background: #f8f9fa;
-            border: 1px solid #e9ecef;
-            color: #6c757d;
-            padding: 5px 10px;
-            border-radius: 4px;
+        .btn {
+            padding: 0.8rem 1.5rem;
+            border: none;
+            border-radius: 5px;
             cursor: pointer;
-            font-size: 0.8rem;
-            margin-top: 10px;
-            display: inline-block;
-        }
-        
-        .debug-toggle:hover {
-            background: #e9ecef;
-        }
-        
-        /* Order Actions */
-        .order-actions {
-            display: flex;
-            gap: 15px;
-            margin-top: 30px;
-            flex-wrap: wrap;
-        }
-        
-        .btn-action {
-            padding: 12px 24px;
-            border-radius: 8px;
-            text-decoration: none;
             font-weight: 500;
+            text-decoration: none;
             display: inline-flex;
             align-items: center;
-            justify-content: center;
-            gap: 8px;
-            transition: all 0.3s ease;
-            border: none;
-            cursor: pointer;
-            font-size: 0.95rem;
+            gap: 0.5rem;
         }
         
-        .btn-track {
-            background: linear-gradient(135deg, #4361ee 0%, #3a56d4 100%);
+        .btn-primary {
+            background: #2196F3;
             color: white;
         }
         
-        .btn-track:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(67, 97, 238, 0.3);
-        }
-        
-        .btn-print {
-            background: white;
-            color: #4361ee;
-            border: 2px solid #4361ee;
-        }
-        
-        .btn-print:hover {
-            background: #4361ee;
+        .btn-success {
+            background: #4CAF50;
             color: white;
         }
         
-        .btn-cancel {
-            background: white;
-            color: #dc3545;
-            border: 2px solid #dc3545;
-        }
-        
-        .btn-cancel:hover {
-            background: #dc3545;
+        .btn-danger {
+            background: #f44336;
             color: white;
         }
         
-        /* Tracking Timeline */
-        .timeline-section {
-            background: white;
-            border-radius: 12px;
-            padding: 25px;
-            margin-top: 30px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
         }
         
         .timeline {
             position: relative;
-            padding-left: 30px;
-            margin-top: 20px;
+            padding-left: 2rem;
         }
         
         .timeline::before {
@@ -537,727 +263,305 @@ $status_classes = [
             top: 0;
             bottom: 0;
             width: 2px;
-            background: #e9ecef;
+            background: #ddd;
         }
         
         .timeline-item {
             position: relative;
-            margin-bottom: 25px;
-        }
-        
-        .timeline-item:last-child {
-            margin-bottom: 0;
+            margin-bottom: 1.5rem;
+            padding-left: 1rem;
         }
         
         .timeline-item::before {
             content: '';
             position: absolute;
-            left: -26px;
+            left: -13px;
             top: 5px;
             width: 12px;
             height: 12px;
             border-radius: 50%;
-            background: #e9ecef;
+            background: #2196F3;
             border: 3px solid white;
-        }
-        
-        .timeline-item.active::before {
-            background: #4361ee;
-        }
-        
-        .timeline-item.completed::before {
-            background: #4cc9f0;
+            box-shadow: 0 0 0 2px #2196F3;
         }
         
         .timeline-date {
-            font-size: 0.85rem;
-            color: #6c757d;
-            margin-bottom: 5px;
-        }
-        
-        .timeline-title {
-            font-weight: 600;
-            color: #212529;
-            margin-bottom: 5px;
-        }
-        
-        .timeline-desc {
-            color: #6c757d;
             font-size: 0.9rem;
+            color: #666;
         }
         
-        /* Payment Info */
-        .payment-section {
-            background: white;
-            border-radius: 12px;
-            padding: 25px;
-            margin-top: 30px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-        }
-        
-        .payment-method {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            margin-top: 15px;
-            padding: 15px;
+        .timeline-content {
             background: #f8f9fa;
-            border-radius: 8px;
+            padding: 0.8rem;
+            border-radius: 5px;
+            margin-top: 0.3rem;
         }
         
-        .payment-icon {
-            font-size: 2rem;
-            color: #4361ee;
+        .note-box {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 5px;
         }
         
-        /* Responsive */
-        @media (max-width: 768px) {
-            .order-header {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-            
-            .order-item {
-                flex-direction: column;
-            }
-            
-            .item-image, .item-placeholder {
-                width: 100%;
-                height: 200px;
-            }
-            
-            .order-actions {
-                flex-direction: column;
-            }
-            
-            .btn-action {
-                width: 100%;
-            }
-            
-            .address-card h4 {
-                padding-right: 0;
-            }
-        }
-        
-        /* Loading State */
-        .loading {
-            opacity: 0.6;
-            pointer-events: none;
-        }
-        
-        /* Alert Messages */
-        .alert {
-            padding: 15px 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .alert-danger {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .alert i {
-            font-size: 1.2rem;
+        .note-box h4 {
+            margin: 0 0 0.5rem 0;
+            color: #856404;
         }
     </style>
 </head>
 <body>
-    <?php include 'components/header_pengguna.php'; ?>
-    
-    <div class="order-detail-container">
-        <!-- Back Button -->
-        <a href="orders.php" class="back-link">
-            <i class="fas fa-arrow-left"></i> Kembali ke Daftar Pesanan
-        </a>
-        
-        <!-- Order Header -->
-        <div class="order-header">
-            <div class="order-info">
-                <h1>Pesanan #<?php echo str_pad($order['id'], 6, '0', STR_PAD_LEFT); ?></h1>
-                <div class="order-date">
-                    <i class="far fa-calendar"></i> 
-                    <?php echo date('d/m/Y H:i', strtotime($order['created_at'])); ?>
-                </div>
+    <div class="kurir-dashboard">
+        <!-- Sidebar -->
+        <div class="kurir-sidebar">
+            <div class="kurir-profile">
+                <img src="../project images/avatar_kurir.png" alt="Foto Kurir">
+                <h3><?php echo htmlspecialchars($_SESSION['nama']); ?></h3>
+                <p><i class="fas fa-box"></i> Detail Pesanan</p>
             </div>
             
-            <div class="order-status <?php echo $status_classes[$order['status']]; ?>">
-                <?php echo $status_labels[$order['status']]; ?>
-            </div>
+            <ul class="kurir-menu">
+                <li><a href="dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+                <li><a href="pesanan.php"><i class="fas fa-clipboard-list"></i> Pesanan</a></li>
+                <li><a href="pengiriman.php"><i class="fas fa-shipping-fast"></i> Pengiriman Aktif</a></li>
+                <li><a href="riwayat.php"><i class="fas fa-history"></i> Riwayat</a></li>
+                <li><a href="profil.php"><i class="fas fa-user"></i> Profil</a></li>
+                <li><a href="../components/user_logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+            </ul>
         </div>
         
-        <!-- Main Content Grid -->
-        <div class="order-grid">
-            <!-- Left Column: Order Items -->
-            <div class="order-items-section">
-                <h2 class="section-title">Item Pesanan</h2>
+        <!-- Main Content -->
+        <div class="kurir-content">
+            <div class="detail-container">
+                <!-- Back Button -->
+                <div class="back-button">
+                    <a href="javascript:history.back()" class="btn-back">
+                        <i class="fas fa-arrow-left"></i> Kembali
+                    </a>
+                </div>
                 
-                <div class="order-items-list">
-                    <?php if (empty($items)): ?>
-                        <div class="no-items">
-                            <i class="fas fa-shopping-cart fa-2x"></i>
-                            <p>Tidak ada item dalam pesanan ini</p>
+                <!-- Order Header -->
+                <div class="order-header">
+                    <div class="order-title">
+                        <h1><i class="fas fa-file-invoice"></i> Pesanan #<?php echo $order['id']; ?></h1>
+                        <div class="order-meta">
+                            <span><i class="fas fa-calendar"></i> <?php echo date('d F Y H:i', strtotime($order['created_at'])); ?></span>
+                            <span><i class="fas fa-user"></i> <?php echo htmlspecialchars($order['nama_pelanggan']); ?></span>
                         </div>
-                    <?php else: ?>
-                        <?php foreach ($items as $item): ?>
-                        <div class="order-item">
-                            <?php if (!empty($item['gambar'])): ?>
-                                <img src="project images/<?php echo htmlspecialchars($item['gambar']); ?>" 
-                                     alt="<?php echo htmlspecialchars($item['produk_nama']); ?>" 
-                                     class="item-image"
-                                     onerror="this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNFM0UzRTMiLz48cGF0aCBkPSJNNjYgNDJINjJDNjIgMzggNjYgMzQgNzAgMzRDNzQgMzQgNzggMzggNzggNDJWNjZINzRWNjJINzBWNjZINjZWNjJINjJWNjZINThWNDJDNTggMzggNjIgMzQgNjYgMzRINzBDNzQgMzQgNzggMzggNzggNDJINzRDNzQgMzggNzAgMzQgNjYgMzRaTTY2IDU4VjU0SDcwVjU4SDc0VjYySDcwVjU4SDY2WiIgZmlsbD0iIzk5OTk5OSIvPjwvc3ZnPg=='">
-                            <?php else: ?>
-                                <div class="item-placeholder">
-                                    <i class="fas fa-box"></i>
+                    </div>
+                    <span class="order-status status-<?php echo $order['status']; ?>">
+                        <?php echo $order['status']; ?>
+                    </span>
+                </div>
+                
+                <div class="order-content">
+                    <!-- Left Column -->
+                    <div>
+                        <!-- Items Section -->
+                        <div class="order-section">
+                            <h3 class="section-title"><i class="fas fa-box-open"></i> Items Pesanan</h3>
+                            <table class="items-table">
+                                <thead>
+                                    <tr>
+                                        <th>Produk</th>
+                                        <th>Harga</th>
+                                        <th>Qty</th>
+                                        <th>Subtotal</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php 
+                                    $total_items = 0;
+                                    while ($item = mysqli_fetch_assoc($items)): 
+                                        $total_items += $item['jumlah'];
+                                    ?>
+                                    <tr>
+                                        <td>
+                                            <div style="display: flex; align-items: center; gap: 1rem;">
+                                                <?php if (!empty($item['gambar'])): ?>
+                                                <img src="../project images/<?php echo htmlspecialchars($item['gambar']); ?>" 
+                                                     alt="<?php echo htmlspecialchars($item['nama']); ?>" 
+                                                     class="item-image">
+                                                <?php else: ?>
+                                                <img src="../project images/default-product.jpg" 
+                                                     alt="Produk" 
+                                                     class="item-image">
+                                                <?php endif; ?>
+                                                
+                                                <div>
+                                                    <div class="item-name"><?php echo htmlspecialchars($item['nama']); ?></div>
+                                                    <div class="item-meta"><?php echo substr($item['deskripsi'], 0, 50); ?>...</div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td>Rp <?php echo number_format($item['harga'], 0, ',', '.'); ?></td>
+                                        <td><?php echo $item['jumlah']; ?></td>
+                                        <td>Rp <?php echo number_format($item['harga'] * $item['jumlah'], 0, ',', '.'); ?></td>
+                                    </tr>
+                                    <?php endwhile; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <!-- Shipping Info -->
+                        <div class="order-section">
+                            <h3 class="section-title"><i class="fas fa-map-marker-alt"></i> Informasi Pengiriman</h3>
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <label>Nama Penerima</label>
+                                    <span><?php echo htmlspecialchars($order['nama_pelanggan']); ?></span>
                                 </div>
-                            <?php endif; ?>
-                            
-                            <div class="item-details">
-                                <h3 class="item-name"><?php echo htmlspecialchars($item['produk_nama']); ?></h3>
-                                <span class="item-category"><?php echo htmlspecialchars($item['kategori']); ?></span>
-                                <div class="item-quantity">
-                                    <strong>Jumlah:</strong> <?php echo $item['quantity']; ?>
+                                <div class="info-item">
+                                    <label>No. HP</label>
+                                    <span><?php echo $order['no_hp']; ?></span>
                                 </div>
-                                <div class="item-price">
-                                    Rp <?php echo number_format($item['price'], 0, ',', '.'); ?> × <?php echo $item['quantity']; ?>
+                                <div class="info-item">
+                                    <label>Email</label>
+                                    <span><?php echo $order['email']; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Alamat Lengkap</label>
+                                    <span><?php echo nl2br(htmlspecialchars($order['alamat_pengiriman'])); ?></span>
+                                </div>
+                                <?php if (!empty($order['catatan'])): ?>
+                                <div class="info-item" style="grid-column: 1 / -1;">
+                                    <label>Catatan Pelanggan</label>
+                                    <span><?php echo nl2br(htmlspecialchars($order['catatan'])); ?></span>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Right Column -->
+                    <div>
+                        <!-- Order Summary -->
+                        <div class="order-section">
+                            <h3 class="section-title"><i class="fas fa-receipt"></i> Ringkasan Pesanan</h3>
+                            <div class="summary-grid">
+                                <div class="summary-item">
+                                    <span>Total Items</span>
+                                    <span><?php echo $total_items; ?> items</span>
+                                </div>
+                                <div class="summary-item">
+                                    <span>Subtotal</span>
+                                    <span>Rp <?php echo number_format($order['total_harga'], 0, ',', '.'); ?></span>
+                                </div>
+                                <div class="summary-item">
+                                    <span>Ongkos Kirim</span>
+                                    <span>Rp <?php echo number_format(10000, 0, ',', '.'); ?></span>
+                                </div>
+                                <div class="summary-item total">
+                                    <span>Total Pembayaran</span>
+                                    <span>Rp <?php echo number_format($order['total_harga'] + 10000, 0, ',', '.'); ?></span>
                                 </div>
                             </div>
                         </div>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </div>
-            </div>
-            
-            <!-- Right Column: Order Summary -->
-            <div class="order-summary-section">
-                <h2 class="section-title">Ringkasan Pesanan</h2>
-                
-                <!-- Calculate subtotal from items -->
-                <div class="summary-row">
-                    <span class="summary-label">Subtotal</span>
-                    <span class="summary-value">Rp <?php echo number_format($subtotal, 0, ',', '.'); ?></span>
-                </div>
-                
-                <!-- Biaya Pengiriman -->
-                <div class="summary-row">
-                    <span class="summary-label">Biaya Pengiriman</span>
-                    <span class="summary-value">Rp <?php echo number_format($shipping_cost, 0, ',', '.'); ?></span>
-                </div>
-                
-                <!-- Biaya Layanan -->
-                <div class="summary-row">
-                    <span class="summary-label">Biaya Layanan</span>
-                    <span class="summary-value">Rp <?php echo number_format($service_fee, 0, ',', '.'); ?></span>
-                </div>
-                
-                <!-- Discount if any -->
-                <?php if (isset($order['discount']) && $order['discount'] > 0): ?>
-                <div class="summary-row">
-                    <span class="summary-label">Diskon</span>
-                    <span class="summary-value" style="color: #4cc9f0;">
-                        -Rp <?php echo number_format($order['discount'], 0, ',', '.'); ?>
-                    </span>
-                </div>
-                <?php endif; ?>
-                
-                <!-- Total Calculation -->
-                <div class="summary-row" style="border-top: 2px solid #e9ecef; padding-top: 20px;">
-                    <span class="summary-label">Total Pembayaran</span>
-                    <span class="summary-value summary-total">
-                        Rp <?php echo number_format($total, 0, ',', '.'); ?>
-                    </span>
-                </div>
-                
-                <!-- Payment Method -->
-                <div class="summary-row">
-                    <span class="summary-label">Metode Pembayaran</span>
-                    <span class="summary-value">
-                        <?php 
-                        $payment_methods = [
-                            'cod' => 'Cash on Delivery',
-                            'transfer' => 'Transfer Bank',
-                            'ewallet' => 'E-Wallet'
-                        ];
-                        echo isset($payment_methods[$order['payment_method']]) ? 
-                             $payment_methods[$order['payment_method']] : 
-                             ucfirst($order['payment_method']);
-                        ?>
-                    </span>
-                </div>
-                
-                <!-- Payment Status -->
-                <div class="summary-row">
-                    <span class="summary-label">Status Pembayaran</span>
-                    <span class="summary-value" style="color: <?php echo $order['payment_status'] == 'paid' ? '#4cc9f0' : '#f72585'; ?>">
-                        <?php 
-                        if ($order['payment_status'] == 'paid') {
-                            echo 'Lunas';
-                        } elseif ($order['payment_status'] == 'pending') {
-                            echo 'Menunggu Pembayaran';
-                        } else {
-                            echo ucfirst($order['payment_status']);
-                        }
-                        ?>
-                    </span>
-                </div>
-                
-                <!-- Order Actions -->
-                <div class="order-actions">
-                    <?php if ($order['status'] == 'shipped'): ?>
-                        <button class="btn-action btn-track">
-                            <i class="fas fa-truck"></i> Lacak Pengiriman
-                        </button>
-                    <?php endif; ?>
-                    
-                    <button class="btn-action btn-print" onclick="printInvoice()">
-                        <i class="fas fa-print"></i> Cetak Invoice
-                    </button>
-                    
-                    <?php if (in_array($order['status'], ['pending', 'processing'])): ?>
-                        <button class="btn-action btn-cancel" onclick="cancelOrder(<?php echo $order['id']; ?>)">
-                            <i class="fas fa-times"></i> Batalkan Pesanan
-                        </button>
-                    <?php endif; ?>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Shipping Address -->
-        <div class="shipping-section">
-            <h2 class="section-title">Alamat Pengiriman</h2>
-            
-            <?php if (!empty($shipping_address)): ?>
-            <div class="address-card">
-                <span class="address-source-badge"><?php echo ucfirst($shipping_address['sumber']); ?></span>
-                
-                <h4><?php echo htmlspecialchars($shipping_address['nama']); ?></h4>
-                
-                <?php if (!empty($shipping_address['telepon'])): ?>
-                <div class="address-detail">
-                    <i class="fas fa-phone"></i>
-                    <p><?php echo htmlspecialchars($shipping_address['telepon']); ?></p>
-                </div>
-                <?php endif; ?>
-                
-                <div class="address-detail">
-                    <i class="fas fa-map-marker-alt"></i>
-                    <p>
-                        <?php echo nl2br(htmlspecialchars($shipping_address['alamat'])); ?>
-                        <?php if (!empty($shipping_address['kota']) || !empty($shipping_address['provinsi'])): ?>
-                            <br>
-                            <?php if (!empty($shipping_address['kota'])): ?>
-                                <?php echo htmlspecialchars($shipping_address['kota']); ?>,
+                        
+                        <!-- Kurir Info -->
+                        <div class="order-section">
+                            <h3 class="section-title"><i class="fas fa-user-tie"></i> Informasi Kurir</h3>
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <label>Nama Kurir</label>
+                                    <span><?php echo htmlspecialchars($order['nama_kurir'] ?? $_SESSION['nama']); ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>No. HP Kurir</label>
+                                    <span><?php echo $order['hp_kurir'] ?? '-'; ?></span>
+                                </div>
+                                <?php if (!empty($order['lokasi_sekarang'])): ?>
+                                <div class="info-item" style="grid-column: 1 / -1;">
+                                    <label>Lokasi Terakhir</label>
+                                    <span><?php echo htmlspecialchars($order['lokasi_sekarang']); ?></span>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        
+                        <!-- Order Timeline -->
+                        <div class="order-section">
+                            <h3 class="section-title"><i class="fas fa-history"></i> Timeline Pesanan</h3>
+                            <div class="timeline">
+                                <div class="timeline-item">
+                                    <div class="timeline-date">
+                                        <?php echo date('d M Y H:i', strtotime($order['created_at'])); ?>
+                                    </div>
+                                    <div class="timeline-content">
+                                        Pesanan dibuat oleh <?php echo htmlspecialchars($order['nama_pelanggan']); ?>
+                                    </div>
+                                </div>
+                                
+                                <?php if ($order['status'] != 'pending'): ?>
+                                <div class="timeline-item">
+                                    <div class="timeline-date">
+                                        <?php echo date('d M Y H:i', strtotime($order['updated_at'])); ?>
+                                    </div>
+                                    <div class="timeline-content">
+                                        Status diubah menjadi: <?php echo $order['status']; ?>
+                                    </div>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        
+                        <!-- Action Buttons -->
+                        <div class="order-section">
+                            <h3 class="section-title"><i class="fas fa-cogs"></i> Aksi</h3>
+                            <div class="action-buttons">
+                                <?php if ($order['status'] == 'menunggu_kurir'): ?>
+                                <button onclick="updateStatus(<?php echo $order['id']; ?>, 'dikirim')" 
+                                        class="btn btn-primary">
+                                    <i class="fas fa-check-circle"></i> Ambil Pesanan
+                                </button>
+                                <?php elseif ($order['status'] == 'dikirim'): ?>
+                                <button onclick="updateStatus(<?php echo $order['id']; ?>, 'diterima')" 
+                                        class="btn btn-success">
+                                    <i class="fas fa-flag-checkered"></i> Tandai Selesai
+                                </button>
+                                <?php endif; ?>
+                                
+                                <a href="../admin/print_invoice.php?id=<?php echo $order['id']; ?>" 
+                                   target="_blank" class="btn btn-secondary">
+                                    <i class="fas fa-print"></i> Cetak Invoice
+                                </a>
+                            </div>
+                            
+                            <?php if ($order['status'] == 'dikirim'): ?>
+                            <div class="note-box">
+                                <h4><i class="fas fa-info-circle"></i> Catatan Pengiriman</h4>
+                                <p>Pastikan untuk mengupdate lokasi secara berkala agar pelanggan dapat melacak pengiriman.</p>
+                            </div>
                             <?php endif; ?>
-                            <?php if (!empty($shipping_address['provinsi'])): ?>
-                                <?php echo htmlspecialchars($shipping_address['provinsi']); ?>
-                            <?php endif; ?>
-                        <?php endif; ?>
-                        <?php if (!empty($shipping_address['kode_pos'])): ?>
-                            <br>Kode Pos: <?php echo htmlspecialchars($shipping_address['kode_pos']); ?>
-                        <?php endif; ?>
-                    </p>
-                </div>
-            </div>
-            
-            <!-- Debug Button (only visible for developers) -->
-            <?php if (isset($_GET['debug']) || (isset($_SESSION['is_admin']) && $_SESSION['is_admin'])): ?>
-            <div class="debug-info" id="debugInfo">
-                <h4>Debug Information:</h4>
-                <p><strong>Order ID:</strong> <?php echo $order['id']; ?></p>
-                <p><strong>Alamat ID:</strong> <?php echo $order['alamat_id'] ?? 'NULL'; ?></p>
-                <p><strong>Sumber Alamat:</strong> <?php echo $shipping_address['sumber']; ?></p>
-                <p><strong>Data dari Database:</strong></p>
-                <ul>
-                    <li>shipping_address: <?php echo $order['shipping_address'] ?? 'NULL'; ?></li>
-                    <li>shipping_name: <?php echo $order['shipping_name'] ?? 'NULL'; ?></li>
-                    <li>shipping_phone: <?php echo $order['shipping_phone'] ?? 'NULL'; ?></li>
-                    <li>shipping_city: <?php echo $order['shipping_city'] ?? 'NULL'; ?></li>
-                    <li>shipping_province: <?php echo $order['shipping_province'] ?? 'NULL'; ?></li>
-                    <li>shipping_postal_code: <?php echo $order['shipping_postal_code'] ?? 'NULL'; ?></li>
-                    <li>ua_alamat: <?php echo $order['ua_alamat'] ?? 'NULL'; ?></li>
-                    <li>ua_nama_penerima: <?php echo $order['ua_nama_penerima'] ?? 'NULL'; ?></li>
-                    <li>ua_telepon: <?php echo $order['ua_telepon'] ?? 'NULL'; ?></li>
-                </ul>
-            </div>
-            <button class="debug-toggle" onclick="toggleDebug()">Show/Hide Debug</button>
-            <?php endif; ?>
-            
-            <?php else: ?>
-            <div class="no-address">
-                <i class="fas fa-map-marker-alt"></i>
-                <h4>Tidak ada alamat yang tercatat</h4>
-                <p>Alamat pengiriman tidak ditemukan untuk pesanan ini.</p>
-                
-                <!-- Debug info untuk developer -->
-                <div style="margin-top: 20px; padding: 10px; background: #f0f0f0; border-radius: 5px; font-size: 0.8rem;">
-                    <p><strong>Debug Info:</strong></p>
-                    <p>Order ID: <?php echo $order['id']; ?></p>
-                    <p>Shipping Address: <?php echo $order['shipping_address'] ?? 'NULL'; ?></p>
-                    <p>Shipping Name: <?php echo $order['shipping_name'] ?? 'NULL'; ?></p>
-                    <p>UA Alamat: <?php echo $order['ua_alamat'] ?? 'NULL'; ?></p>
-                </div>
-            </div>
-            <?php endif; ?>
-        </div>
-        
-        <!-- Order Tracking Timeline -->
-        <div class="timeline-section">
-            <h2 class="section-title">Status Pesanan</h2>
-            
-            <div class="timeline">
-                <div class="timeline-item <?php echo in_array($order['status'], ['processing', 'shipped', 'delivered']) ? 'completed' : ''; ?> <?php echo $order['status'] == 'pending' ? 'active' : ''; ?>">
-                    <div class="timeline-date"><?php echo date('d/m/Y H:i', strtotime($order['created_at'])); ?></div>
-                    <div class="timeline-title">Pesanan Dibuat</div>
-                    <div class="timeline-desc">Pesanan telah diterima sistem</div>
-                </div>
-                
-                <div class="timeline-item <?php echo in_array($order['status'], ['shipped', 'delivered']) ? 'completed' : ''; ?> <?php echo $order['status'] == 'processing' ? 'active' : ''; ?>">
-                    <div class="timeline-date">
-                        <?php echo $order['status'] == 'pending' ? '-' : date('d/m/Y H:i', strtotime($order['updated_at'])); ?>
+                        </div>
                     </div>
-                    <div class="timeline-title">Diproses</div>
-                    <div class="timeline-desc">Pesanan sedang disiapkan</div>
-                </div>
-                
-                <div class="timeline-item <?php echo $order['status'] == 'delivered' ? 'completed' : ''; ?> <?php echo $order['status'] == 'shipped' ? 'active' : ''; ?>">
-                    <div class="timeline-date">
-                        <?php echo in_array($order['status'], ['pending', 'processing']) ? '-' : date('d/m/Y H:i', strtotime($order['updated_at'])); ?>
-                    </div>
-                    <div class="timeline-title">Dikirim</div>
-                    <div class="timeline-desc">Pesanan sedang dalam pengiriman</div>
-                </div>
-                
-                <div class="timeline-item <?php echo $order['status'] == 'delivered' ? 'active' : ''; ?>">
-                    <div class="timeline-date">
-                        <?php echo $order['status'] != 'delivered' ? '-' : date('d/m/Y H:i', strtotime($order['updated_at'])); ?>
-                    </div>
-                    <div class="timeline-title">Sampai</div>
-                    <div class="timeline-desc">Pesanan telah sampai di tujuan</div>
                 </div>
             </div>
         </div>
-        
-        <!-- Payment Information -->
-        <?php if ($order['payment_method'] == 'transfer'): ?>
-        <div class="payment-section">
-            <h2 class="section-title">Informasi Pembayaran</h2>
-            
-            <div class="payment-method">
-                <i class="fas fa-university payment-icon"></i>
-                <div>
-                    <h4>Transfer Bank</h4>
-                    <p>BCA: 1234567890 a.n MinShop</p>
-                    <p>Jumlah: Rp <?php echo number_format($total, 0, ',', '.'); ?></p>
-                    <p>Status: <strong style="color: <?php echo $order['payment_status'] == 'paid' ? '#4cc9f0' : '#f72585'; ?>">
-                        <?php 
-                        if ($order['payment_status'] == 'paid') {
-                            echo 'Lunas';
-                        } elseif ($order['payment_status'] == 'pending') {
-                            echo 'Menunggu Pembayaran';
-                        } else {
-                            echo ucfirst($order['payment_status']);
-                        }
-                        ?>
-                    </strong></p>
-                    <?php if ($order['payment_status'] == 'pending'): ?>
-                    <p style="font-size: 0.9rem; color: #666; margin-top: 5px;">
-                        Silakan transfer ke rekening di atas dan upload bukti transfer di halaman pesanan.
-                    </p>
-                    <?php endif; ?>
-                </div>
-            </div>
-        </div>
-        <?php endif; ?>
     </div>
     
-    <?php include 'components/footer.php'; ?>
-    
     <script>
-    function cancelOrder(orderId) {
-        if (confirm('Apakah Anda yakin ingin membatalkan pesanan ini?')) {
-            // Show loading
-            document.body.classList.add('loading');
-            
-            // Send cancellation request
-            fetch('cancel_order.php', {
+    function updateStatus(orderId, status) {
+        if (confirm('Apakah Anda yakin ingin mengupdate status pesanan?')) {
+            fetch('update_status.php', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
                 },
-                body: 'order_id=' + orderId
+                body: 'order_id=' + orderId + '&status=' + status
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    alert('Pesanan berhasil dibatalkan');
+                    alert('Status berhasil diupdate!');
                     location.reload();
                 } else {
-                    alert('Gagal membatalkan pesanan: ' + data.message);
+                    alert('Error: ' + data.message);
                 }
-            })
-            .catch(error => {
-                alert('Terjadi kesalahan: ' + error);
-            })
-            .finally(() => {
-                document.body.classList.remove('loading');
             });
         }
     }
-    
-    // Track order button
-    document.querySelector('.btn-track')?.addEventListener('click', function() {
-        const orderId = <?php echo $order['id']; ?>;
-        window.open('tracking.php?id=' + orderId, '_blank');
-    });
-    
-    // Print invoice function
-    function printInvoice() {
-        const printWindow = window.open('', '_blank');
-        
-        // Get current date
-        const now = new Date();
-        const dateStr = now.toLocaleDateString('id-ID', {
-            day: '2-digit',
-            month: 'long',
-            year: 'numeric'
-        });
-        
-        // Create invoice content
-        const invoiceContent = `
-            <!DOCTYPE html>
-            <html lang="id">
-            <head>
-                <title>Invoice #<?php echo str_pad($order['id'], 6, '0', STR_PAD_LEFT); ?></title>
-                <style>
-                    body {
-                        font-family: Arial, sans-serif;
-                        padding: 30px;
-                        max-width: 800px;
-                        margin: 0 auto;
-                        color: #333;
-                    }
-                    .invoice-header {
-                        text-align: center;
-                        margin-bottom: 30px;
-                        border-bottom: 3px solid #4361ee;
-                        padding-bottom: 20px;
-                    }
-                    .invoice-header h1 {
-                        color: #4361ee;
-                        margin-bottom: 5px;
-                    }
-                    .company-info {
-                        text-align: center;
-                        margin-bottom: 30px;
-                        color: #666;
-                    }
-                    .invoice-details {
-                        display: flex;
-                        justify-content: space-between;
-                        margin-bottom: 30px;
-                    }
-                    .details-box {
-                        background: #f8f9fa;
-                        padding: 15px;
-                        border-radius: 8px;
-                        flex: 1;
-                        margin: 0 10px;
-                    }
-                    .details-box:first-child {
-                        margin-left: 0;
-                    }
-                    .details-box:last-child {
-                        margin-right: 0;
-                    }
-                    table {
-                        width: 100%;
-                        border-collapse: collapse;
-                        margin: 30px 0;
-                    }
-                    th {
-                        background: #4361ee;
-                        color: white;
-                        padding: 12px;
-                        text-align: left;
-                    }
-                    td {
-                        padding: 12px;
-                        border-bottom: 1px solid #ddd;
-                    }
-                    .summary {
-                        float: right;
-                        width: 300px;
-                        margin-top: 30px;
-                    }
-                    .summary-row {
-                        display: flex;
-                        justify-content: space-between;
-                        margin-bottom: 10px;
-                        padding: 8px 0;
-                        border-bottom: 1px solid #eee;
-                    }
-                    .total-row {
-                        font-weight: bold;
-                        font-size: 1.2em;
-                        border-top: 2px solid #4361ee;
-                        margin-top: 10px;
-                        padding-top: 15px;
-                    }
-                    .footer {
-                        margin-top: 50px;
-                        text-align: center;
-                        color: #666;
-                        font-size: 0.9em;
-                    }
-                    @media print {
-                        body {
-                            padding: 0;
-                        }
-                        .no-print {
-                            display: none;
-                        }
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="invoice-header">
-                    <h1>INVOICE</h1>
-                    <p>MinShop - E-Commerce Platform</p>
-                </div>
-                
-                <div class="company-info">
-                    <p><strong>MinShop</strong></p>
-                    <p>Jl. Contoh No. 123, Kota Contoh</p>
-                    <p>Email: info@minshop.com | Telp: (021) 123-4567</p>
-                </div>
-                
-                <div class="invoice-details">
-                    <div class="details-box">
-                        <h3>Informasi Pesanan</h3>
-                        <p><strong>No. Invoice:</strong> #<?php echo str_pad($order['id'], 6, '0', STR_PAD_LEFT); ?></p>
-                        <p><strong>Tanggal:</strong> ${dateStr}</p>
-                        <p><strong>Status:</strong> <?php echo $status_labels[$order['status']]; ?></p>
-                    </div>
-                    
-                    <div class="details-box">
-                        <h3>Informasi Pelanggan</h3>
-                        <p><strong>Nama:</strong> <?php echo htmlspecialchars($shipping_address['nama'] ?? 'Pelanggan'); ?></p>
-                        <?php if (!empty($shipping_address['telepon'])): ?>
-                        <p><strong>Telepon:</strong> <?php echo htmlspecialchars($shipping_address['telepon']); ?></p>
-                        <?php endif; ?>
-                    </div>
-                </div>
-                
-                <h3>Detail Produk</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Produk</th>
-                            <th>Harga</th>
-                            <th>Qty</th>
-                            <th>Total</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($items as $item): ?>
-                        <tr>
-                            <td><?php echo htmlspecialchars($item['produk_nama']); ?></td>
-                            <td>Rp <?php echo number_format($item['price'], 0, ',', '.'); ?></td>
-                            <td><?php echo $item['quantity']; ?></td>
-                            <td>Rp <?php echo number_format($item['price'] * $item['quantity'], 0, ',', '.'); ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-                
-                <div class="summary">
-                    <div class="summary-row">
-                        <span>Subtotal:</span>
-                        <span>Rp <?php echo number_format($subtotal, 0, ',', '.'); ?></span>
-                    </div>
-                    <div class="summary-row">
-                        <span>Biaya Pengiriman:</span>
-                        <span>Rp <?php echo number_format($shipping_cost, 0, ',', '.'); ?></span>
-                    </div>
-                    <div class="summary-row">
-                        <span>Biaya Layanan:</span>
-                        <span>Rp <?php echo number_format($service_fee, 0, ',', '.'); ?></span>
-                    </div>
-                    <?php if (isset($order['discount']) && $order['discount'] > 0): ?>
-                    <div class="summary-row">
-                        <span>Diskon:</span>
-                        <span>-Rp <?php echo number_format($order['discount'], 0, ',', '.'); ?></span>
-                    </div>
-                    <?php endif; ?>
-                    <div class="summary-row total-row">
-                        <span>Total Pembayaran:</span>
-                        <span>Rp <?php echo number_format($total, 0, ',', '.'); ?></span>
-                    </div>
-                </div>
-                
-                <?php if (!empty($shipping_address)): ?>
-                <div style="clear: both; margin-top: 200px;">
-                    <h3>Alamat Pengiriman</h3>
-                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-top: 10px;">
-                        <p><strong><?php echo htmlspecialchars($shipping_address['nama']); ?></strong></p>
-                        <?php if (!empty($shipping_address['telepon'])): ?>
-                        <p><?php echo htmlspecialchars($shipping_address['telepon']); ?></p>
-                        <?php endif; ?>
-                        <p><?php echo nl2br(htmlspecialchars($shipping_address['alamat'])); ?></p>
-                        <?php if (!empty($shipping_address['kota']) || !empty($shipping_address['provinsi'])): ?>
-                        <p><?php echo htmlspecialchars($shipping_address['kota']); ?>, <?php echo htmlspecialchars($shipping_address['provinsi']); ?></p>
-                        <?php endif; ?>
-                        <?php if (!empty($shipping_address['kode_pos'])): ?>
-                        <p>Kode Pos: <?php echo htmlspecialchars($shipping_address['kode_pos']); ?></p>
-                        <?php endif; ?>
-                    </div>
-                </div>
-                <?php endif; ?>
-                
-                <div class="footer">
-                    <p>Terima kasih telah berbelanja di MinShop!</p>
-                    <p>Invoice ini sah dan dapat digunakan sebagai bukti pembayaran</p>
-                    <p>Dicetak pada: ${new Date().toLocaleString('id-ID')}</p>
-                </div>
-            </body>
-            </html>
-        `;
-        
-        printWindow.document.write(invoiceContent);
-        printWindow.document.close();
-        printWindow.focus();
-        setTimeout(() => {
-            printWindow.print();
-            printWindow.close();
-        }, 500);
-    }
-    
-    // Toggle debug info
-    function toggleDebug() {
-        const debugInfo = document.getElementById('debugInfo');
-        if (debugInfo) {
-            debugInfo.style.display = debugInfo.style.display === 'none' ? 'block' : 'none';
-        }
-    }
-    
-    // Auto remove messages after 5 seconds
-    setTimeout(() => {
-        const alerts = document.querySelectorAll('.alert');
-        alerts.forEach(alert => {
-            alert.style.opacity = '0';
-            setTimeout(() => alert.remove(), 300);
-        });
-    }, 5000);
     </script>
 </body>
 </html>
